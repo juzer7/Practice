@@ -5,7 +5,7 @@ param(
 
 Write-Host "Starting DNS Zone Group reconciliation for RG: $ResourceGroupName"
 
-# 🔹 CONFIG: groupId → Private DNS Zone ID (PASS THESE)
+# 🔹 CONFIG: groupId → Private DNS Zone ID
 $dnsZoneMap = @{
     "blob"      = "/subscriptions/<sub>/resourceGroups/<dns-rg>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
     "file"      = "/subscriptions/<sub>/resourceGroups/<dns-rg>/providers/Microsoft.Network/privateDnsZones/privatelink.file.core.windows.net"
@@ -54,7 +54,7 @@ function Invoke-WithRetry {
     throw "Operation failed after $Retries retries"
 }
 
-# 🔹 Fetch all Private Endpoints (single call)
+# 🔹 Fetch all Private Endpoints
 $privateEndpoints = az network private-endpoint list `
     --resource-group $ResourceGroupName `
     | ConvertFrom-Json
@@ -64,64 +64,49 @@ if (-not $privateEndpoints) {
     return
 }
 
-# 🔹 Fetch all DNS Zone Groups via Resource Graph (bulk)
-$zoneGroups = az graph query -q "
-Resources
-| where type == 'microsoft.network/privateendpoints/privateDnsZoneGroups'
-| where resourceGroup == '$ResourceGroupName'
-| project peId = tostring(split(id, '/privateDnsZoneGroups')[0]),
-         zones = properties.privateDnsZoneConfigs
-" | ConvertFrom-Json
+# 🔹 Process each Private Endpoint (Sequential - stable)
+foreach ($pe in $privateEndpoints) {
 
-# 🔹 Build lookup
-$zoneGroupLookup = @{}
-
-foreach ($zg in $zoneGroups.data) {
-    $zones = @()
-    foreach ($z in $zg.zones) {
-        $zones += ($z.privateDnsZoneId.Split("/")[-1])
-    }
-    $zoneGroupLookup[$zg.peId] = $zones
-}
-
-# 🔹 Parallel Processing
-$throttleLimit = 10
-
-$privateEndpoints | ForEach-Object -Parallel {
-
-    param($dnsZoneMap, $zoneGroupLookup, $ResourceGroupName)
-
-    function Invoke-WithRetry {
-        param ([scriptblock]$ScriptBlock, [int]$Retries = 3)
-        for ($i = 0; $i -lt $Retries; $i++) {
-            try { return & $ScriptBlock }
-            catch { Start-Sleep -Seconds (2 * ($i + 1)) }
-        }
-        throw "Retry failed"
-    }
-
-    $pe = $_
-    $peId = $pe.id
     $peName = $pe.name
+    $peId   = $pe.id
 
+    Write-Host "`nProcessing PE: $peName"
+
+    # 🔹 Get existing DNS zone groups for this PE
     $existingZones = @()
-    if ($zoneGroupLookup.ContainsKey($peId)) {
-        $existingZones = $zoneGroupLookup[$peId]
+
+    try {
+        $zoneGroups = az network private-endpoint dns-zone-group list `
+            --resource-group $ResourceGroupName `
+            --endpoint-name $peName `
+            | ConvertFrom-Json
+
+        foreach ($zg in $zoneGroups) {
+            foreach ($config in $zg.privateDnsZoneConfigs) {
+                $existingZones += ($config.privateDnsZoneId.Split("/")[-1])
+            }
+        }
+    }
+    catch {
+        Write-Host "No existing DNS zone groups found for $peName"
     }
 
+    # 🔹 Process groupIds
     foreach ($conn in $pe.privateLinkServiceConnections) {
 
         foreach ($groupId in $conn.groupIds) {
 
             if (-not $dnsZoneMap.ContainsKey($groupId)) {
-                Write-Host "[$peName] Unknown groupId: $groupId"
+                Write-Warning "[$peName] Unknown groupId: $groupId"
                 continue
             }
 
-            $zoneId = $dnsZoneMap[$groupId]
+            $zoneId   = $dnsZoneMap[$groupId]
             $zoneName = $zoneId.Split("/")[-1]
 
+            # 🔹 Skip if already configured
             if ($existingZones -contains $zoneName) {
+                Write-Host "[$peName] Already has $zoneName"
                 continue
             }
 
@@ -137,7 +122,6 @@ $privateEndpoints | ForEach-Object -Parallel {
             }
         }
     }
+}
 
-} -ThrottleLimit $throttleLimit -ArgumentList $dnsZoneMap, $zoneGroupLookup, $ResourceGroupName
-
-Write-Host "Completed DNS reconciliation."
+Write-Host "`nCompleted DNS reconciliation."
