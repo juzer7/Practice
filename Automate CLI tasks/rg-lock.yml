@@ -1,0 +1,126 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Task: Create or delete a Resource Group lock
+# Trigger: Manual / REST API from Ops Portal
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "rg-lock-$(lockAction)-$(Date:yyyyMMdd)-$(Rev:r)"
+
+parameters:
+  - name: subscriptionId
+    type: string
+    displayName: "Azure Subscription ID"
+    default: ""
+
+  - name: resourceGroup
+    type: string
+    displayName: "Resource Group"
+    default: ""
+
+  - name: lockName
+    type: string
+    displayName: "Lock Name"
+    default: "rg-delete-lock"
+
+  - name: lockType
+    type: string
+    displayName: "Lock Type"
+    default: "CanNotDelete"
+    values:
+      - CanNotDelete
+      - ReadOnly
+
+  - name: lockAction
+    type: string
+    displayName: "Action"
+    default: "create"
+    values:
+      - create
+      - delete
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  SUBSCRIPTION_ID: ${{ parameters.subscriptionId }}
+  RESOURCE_GROUP:  ${{ parameters.resourceGroup }}
+  LOCK_NAME:       ${{ parameters.lockName }}
+  LOCK_TYPE:       ${{ parameters.lockType }}
+  LOCK_ACTION:     ${{ parameters.lockAction }}
+
+stages:
+  - stage: Validate
+    displayName: "Validate inputs"
+    jobs:
+      - job: ValidateJob
+        steps:
+          - script: |
+              fail=0
+              [ -z "$RESOURCE_GROUP" ] && echo "ERROR: resourceGroup is required" && fail=1
+              [ -z "$LOCK_NAME"      ] && echo "ERROR: lockName is required"      && fail=1
+              [ "$fail" = "1" ] && exit 1
+              echo "Parameters OK"
+              echo "  Resource Group : $RESOURCE_GROUP"
+              echo "  Lock name      : $LOCK_NAME"
+              echo "  Lock type      : $LOCK_TYPE"
+              echo "  Action         : $LOCK_ACTION"
+            displayName: "Check required params"
+
+  - stage: Apply
+    displayName: "${{ parameters.lockAction }} lock"
+    dependsOn: Validate
+    jobs:
+      - job: LockJob
+        displayName: "az lock ${{ parameters.lockAction }}"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Set subscription context"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                [ -n "$SUBSCRIPTION_ID" ] && az account set --subscription "$SUBSCRIPTION_ID"
+                echo "Active subscription: $(az account show --query name -o tsv)"
+
+          - task: AzureCLI@2
+            displayName: "Create lock"
+            condition: eq(variables['LOCK_ACTION'], 'create')
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Creating $LOCK_TYPE lock '$LOCK_NAME' on RG '$RESOURCE_GROUP'..."
+                az lock create \
+                  --name "$LOCK_NAME" \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --lock-type "$LOCK_TYPE" \
+                  --notes "Created by Azure Config Ops Portal"
+                echo "Lock created. Listing locks on RG:"
+                az lock list --resource-group "$RESOURCE_GROUP" -o table
+
+          - task: AzureCLI@2
+            displayName: "Delete lock"
+            condition: eq(variables['LOCK_ACTION'], 'delete')
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Deleting lock '$LOCK_NAME' from RG '$RESOURCE_GROUP'..."
+                # Verify the lock exists before attempting delete
+                LOCK_ID=$(az lock list \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --query "[?name=='$LOCK_NAME'].id" -o tsv)
+                if [ -z "$LOCK_ID" ]; then
+                  echo "WARNING: Lock '$LOCK_NAME' not found on '$RESOURCE_GROUP'. Nothing to delete."
+                  exit 0
+                fi
+                az lock delete \
+                  --name "$LOCK_NAME" \
+                  --resource-group "$RESOURCE_GROUP"
+                echo "Lock deleted. Remaining locks:"
+                az lock list --resource-group "$RESOURCE_GROUP" -o table

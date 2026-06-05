@@ -1,0 +1,129 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Task: Add a service endpoint to an existing subnet
+# Trigger: Manual / REST API from Ops Portal
+# Author: Azure Config Ops Portal
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "add-service-endpoint-$(Date:yyyyMMdd)-$(Rev:r)"
+
+parameters:
+  - name: subscriptionId
+    type: string
+    displayName: "Azure Subscription ID"
+    default: ""
+
+  - name: resourceGroup
+    type: string
+    displayName: "Resource Group"
+    default: ""
+
+  - name: vnetName
+    type: string
+    displayName: "VNet Name"
+    default: ""
+
+  - name: subnetName
+    type: string
+    displayName: "Subnet Name"
+    default: ""
+
+  - name: serviceEndpoint
+    type: string
+    displayName: "Service Endpoint (e.g. Microsoft.KeyVault)"
+    default: "Microsoft.KeyVault"
+    values:
+      - Microsoft.Storage
+      - Microsoft.Sql
+      - Microsoft.KeyVault
+      - Microsoft.EventHub
+      - Microsoft.ServiceBus
+      - Microsoft.ContainerRegistry
+      - Microsoft.CognitiveServices
+      - Microsoft.AzureActiveDirectory
+
+trigger: none          # Manual / API-triggered only
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  SUBSCRIPTION_ID:  ${{ parameters.subscriptionId }}
+  RESOURCE_GROUP:   ${{ parameters.resourceGroup }}
+  VNET_NAME:        ${{ parameters.vnetName }}
+  SUBNET_NAME:      ${{ parameters.subnetName }}
+  SERVICE_ENDPOINT: ${{ parameters.serviceEndpoint }}
+
+stages:
+  - stage: Validate
+    displayName: "Validate inputs"
+    jobs:
+      - job: ValidateJob
+        displayName: "Input validation"
+        steps:
+          - script: |
+              echo "=== Validating parameters ==="
+              fail=0
+              [ -z "$RESOURCE_GROUP"   ] && echo "ERROR: resourceGroup is required"   && fail=1
+              [ -z "$VNET_NAME"        ] && echo "ERROR: vnetName is required"         && fail=1
+              [ -z "$SUBNET_NAME"      ] && echo "ERROR: subnetName is required"       && fail=1
+              [ -z "$SERVICE_ENDPOINT" ] && echo "ERROR: serviceEndpoint is required"  && fail=1
+              [ "$fail" = "1" ] && exit 1
+              echo "All parameters present. Proceeding."
+              echo "  Resource Group   : $RESOURCE_GROUP"
+              echo "  VNet             : $VNET_NAME"
+              echo "  Subnet           : $SUBNET_NAME"
+              echo "  Service endpoint : $SERVICE_ENDPOINT"
+            displayName: "Check required params"
+
+  - stage: Apply
+    displayName: "Apply service endpoint"
+    dependsOn: Validate
+    jobs:
+      - job: ApplyJob
+        displayName: "az network vnet subnet update"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Set subscription context"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"   # Set in pipeline variables
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                [ -n "$SUBSCRIPTION_ID" ] && az account set --subscription "$SUBSCRIPTION_ID"
+                echo "Active subscription: $(az account show --query name -o tsv)"
+
+          - task: AzureCLI@2
+            displayName: "Verify subnet exists"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Checking subnet $SUBNET_NAME in VNet $VNET_NAME..."
+                az network vnet subnet show \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --vnet-name "$VNET_NAME" \
+                  --name "$SUBNET_NAME" \
+                  --query "name" -o tsv
+                echo "Subnet found."
+
+          - task: AzureCLI@2
+            displayName: "Add service endpoint"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Adding service endpoint $SERVICE_ENDPOINT to subnet $SUBNET_NAME..."
+                az network vnet subnet update \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --vnet-name "$VNET_NAME" \
+                  --name "$SUBNET_NAME" \
+                  --service-endpoints "$SERVICE_ENDPOINT"
+                echo "Done. Verifying..."
+                az network vnet subnet show \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --vnet-name "$VNET_NAME" \
+                  --name "$SUBNET_NAME" \
+                  --query "serviceEndpoints[].service" -o tsv

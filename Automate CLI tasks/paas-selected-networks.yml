@@ -1,0 +1,240 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Task: Configure "Selected Networks" (VNet rules) for PaaS services
+# Supports: CosmosDB, Key Vault, ADLS/Storage, Service Bus, Event Hub
+# Trigger: Manual / REST API from Ops Portal
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "paas-selected-networks-$(paasService)-$(Date:yyyyMMdd)-$(Rev:r)"
+
+parameters:
+  - name: subscriptionId
+    type: string
+    displayName: "Azure Subscription ID"
+    default: ""
+
+  - name: resourceGroup
+    type: string
+    displayName: "PaaS Service Resource Group"
+    default: ""
+
+  - name: paasService
+    type: string
+    displayName: "PaaS Service Type"
+    default: "keyvault"
+    values:
+      - cosmos
+      - keyvault
+      - adls
+      - servicebus
+      - eventhub
+
+  - name: serviceName
+    type: string
+    displayName: "PaaS Service / Account Name"
+    default: ""
+
+  - name: vnetResourceGroup
+    type: string
+    displayName: "VNet Resource Group"
+    default: ""
+
+  - name: vnetName
+    type: string
+    displayName: "VNet Name"
+    default: ""
+
+  - name: subnetName
+    type: string
+    displayName: "Subnet Name"
+    default: ""
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  SUBSCRIPTION_ID: ${{ parameters.subscriptionId }}
+  RESOURCE_GROUP:  ${{ parameters.resourceGroup }}
+  PAAS_SERVICE:    ${{ parameters.paasService }}
+  SERVICE_NAME:    ${{ parameters.serviceName }}
+  VNET_RG:         ${{ coalesce(parameters.vnetResourceGroup, parameters.resourceGroup) }}
+  VNET_NAME:       ${{ parameters.vnetName }}
+  SUBNET_NAME:     ${{ parameters.subnetName }}
+
+stages:
+  - stage: Validate
+    displayName: "Validate inputs"
+    jobs:
+      - job: ValidateJob
+        steps:
+          - script: |
+              fail=0
+              [ -z "$RESOURCE_GROUP" ] && echo "ERROR: resourceGroup is required"  && fail=1
+              [ -z "$SERVICE_NAME"   ] && echo "ERROR: serviceName is required"     && fail=1
+              [ -z "$VNET_NAME"      ] && echo "ERROR: vnetName is required"        && fail=1
+              [ -z "$SUBNET_NAME"    ] && echo "ERROR: subnetName is required"      && fail=1
+              [ "$fail" = "1" ] && exit 1
+              echo "Parameters OK"
+              echo "  PaaS service : $PAAS_SERVICE"
+              echo "  Service name : $SERVICE_NAME"
+              echo "  VNet         : $VNET_NAME / $SUBNET_NAME (RG: $VNET_RG)"
+            displayName: "Check required params"
+
+  - stage: PreCheck
+    displayName: "Pre-flight checks"
+    dependsOn: Validate
+    jobs:
+      - job: PreCheckJob
+        steps:
+          - task: AzureCLI@2
+            displayName: "Set subscription and verify subnet has service endpoint"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                [ -n "$SUBSCRIPTION_ID" ] && az account set --subscription "$SUBSCRIPTION_ID"
+
+                # Map paas service to required service endpoint type
+                declare -A ENDPOINT_MAP=(
+                  [cosmos]="Microsoft.AzureCosmosDB"
+                  [keyvault]="Microsoft.KeyVault"
+                  [adls]="Microsoft.Storage"
+                  [servicebus]="Microsoft.ServiceBus"
+                  [eventhub]="Microsoft.EventHub"
+                )
+                REQUIRED_EP="${ENDPOINT_MAP[$PAAS_SERVICE]}"
+                echo "Checking subnet $SUBNET_NAME for service endpoint: $REQUIRED_EP"
+
+                EXISTING=$(az network vnet subnet show \
+                  --resource-group "$VNET_RG" \
+                  --vnet-name "$VNET_NAME" \
+                  --name "$SUBNET_NAME" \
+                  --query "serviceEndpoints[?service=='$REQUIRED_EP'].service" -o tsv 2>/dev/null)
+
+                if [ -z "$EXISTING" ]; then
+                  echo "WARNING: Subnet does not have service endpoint $REQUIRED_EP."
+                  echo "The network rule may succeed but traffic won't flow until the endpoint is added."
+                  echo "Consider running add-service-endpoint.yml first."
+                else
+                  echo "Service endpoint $REQUIRED_EP found on subnet. Good to proceed."
+                fi
+
+  - stage: Apply
+    displayName: "Add network rule"
+    dependsOn: PreCheck
+    jobs:
+      - job: ApplyCosmosJob
+        displayName: "Cosmos DB network rule"
+        condition: eq(variables['PAAS_SERVICE'], 'cosmos')
+        steps:
+          - task: AzureCLI@2
+            displayName: "az cosmosdb network-rule add"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Adding VNet rule to Cosmos DB account $SERVICE_NAME..."
+                az cosmosdb network-rule add \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --name "$SERVICE_NAME" \
+                  --vnet-name "$VNET_NAME" \
+                  --subnet "$SUBNET_NAME" \
+                  --virtual-network-filter-enabled true
+                echo "Done. Current network rules:"
+                az cosmosdb network-rule list \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --name "$SERVICE_NAME" -o table
+
+      - job: ApplyKVJob
+        displayName: "Key Vault network rule"
+        condition: eq(variables['PAAS_SERVICE'], 'keyvault')
+        steps:
+          - task: AzureCLI@2
+            displayName: "az keyvault network-rule add"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Adding VNet rule to Key Vault $SERVICE_NAME..."
+                az keyvault network-rule add \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --name "$SERVICE_NAME" \
+                  --vnet-name "$VNET_NAME" \
+                  --subnet "$SUBNET_NAME"
+                echo "Done. Current network rules:"
+                az keyvault network-rule list \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --name "$SERVICE_NAME" -o table
+
+      - job: ApplyADLSJob
+        displayName: "ADLS/Storage network rule"
+        condition: eq(variables['PAAS_SERVICE'], 'adls')
+        steps:
+          - task: AzureCLI@2
+            displayName: "az storage account network-rule add"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Adding VNet rule to Storage account $SERVICE_NAME..."
+                az storage account network-rule add \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --account-name "$SERVICE_NAME" \
+                  --vnet-name "$VNET_NAME" \
+                  --subnet "$SUBNET_NAME"
+                echo "Done. Current network rules:"
+                az storage account network-rule list \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --account-name "$SERVICE_NAME" -o table
+
+      - job: ApplyServiceBusJob
+        displayName: "Service Bus network rule"
+        condition: eq(variables['PAAS_SERVICE'], 'servicebus')
+        steps:
+          - task: AzureCLI@2
+            displayName: "az servicebus network-rule add"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Adding VNet rule to Service Bus namespace $SERVICE_NAME..."
+                az servicebus namespace network-rule-set virtual-network-rule add \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --namespace-name "$SERVICE_NAME" \
+                  --vnet-name "$VNET_NAME" \
+                  --subnet-name "$SUBNET_NAME"
+                echo "Done. Current network rules:"
+                az servicebus namespace network-rule-set show \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --namespace-name "$SERVICE_NAME" \
+                  --query "virtualNetworkRules" -o table
+
+      - job: ApplyEventHubJob
+        displayName: "Event Hub network rule"
+        condition: eq(variables['PAAS_SERVICE'], 'eventhub')
+        steps:
+          - task: AzureCLI@2
+            displayName: "az eventhubs network-rule add"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Adding VNet rule to Event Hub namespace $SERVICE_NAME..."
+                az eventhubs namespace network-rule-set virtual-network-rule add \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --namespace-name "$SERVICE_NAME" \
+                  --vnet-name "$VNET_NAME" \
+                  --subnet-name "$SUBNET_NAME"
+                echo "Done. Current network rules:"
+                az eventhubs namespace network-rule-set show \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --namespace-name "$SERVICE_NAME" \
+                  --query "virtualNetworkRules" -o table

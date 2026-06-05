@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Azure Config Ops Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0f14;
+    --bg2: #13161e;
+    --bg3: #1a1e2a;
+    --bg4: #222736;
+    --border: #2a2f3f;
+    --border2: #363d52;
+    --accent: #4f7fff;
+    --accent2: #7b9fff;
+    --accent-dim: rgba(79,127,255,0.12);
+    --accent-dim2: rgba(79,127,255,0.06);
+    --text: #e8eaf0;
+    --text2: #8b91a8;
+    --text3: #555d75;
+    --success: #34c97a;
+    --success-bg: rgba(52,201,122,0.1);
+    --warn: #f5a623;
+    --warn-bg: rgba(245,166,35,0.1);
+    --danger: #ff5b5b;
+    --danger-bg: rgba(255,91,91,0.1);
+    --mono: 'IBM Plex Mono', monospace;
+    --display: 'Syne', sans-serif;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--display);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* ── Layout ── */
+  .app { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .sidebar-logo {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-logo .wordmark {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--accent2);
+  }
+  .sidebar-logo .sub {
+    font-size: 11px;
+    color: var(--text3);
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+
+  .sidebar-section {
+    padding: 14px 12px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text3);
+  }
+
+  .task-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    margin: 1px 8px;
+    border-radius: var(--radius);
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    font-family: var(--display);
+    font-size: 13px;
+    cursor: pointer;
+    width: calc(100% - 16px);
+    text-align: left;
+    transition: background .15s, color .15s;
+  }
+  .task-btn:hover { background: var(--bg3); color: var(--text); }
+  .task-btn.active {
+    background: var(--accent-dim);
+    color: var(--accent2);
+    font-weight: 600;
+  }
+  .task-btn .icon {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--bg4);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+    transition: background .15s;
+  }
+  .task-btn.active .icon { background: var(--accent-dim2); }
+
+  .sidebar-bottom {
+    margin-top: auto;
+    padding: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .config-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text2);
+    font-family: var(--display);
+    font-size: 12px;
+    cursor: pointer;
+    width: 100%;
+    transition: all .15s;
+  }
+  .config-btn:hover { background: var(--bg3); color: var(--text); border-color: var(--border2); }
+
+  /* ── Main ── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .topbar {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg2);
+  }
+  .topbar-title { font-size: 15px; font-weight: 600; }
+  .topbar-meta { font-size: 11px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
+  .env-badge {
+    font-size: 10px;
+    font-family: var(--mono);
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 20px;
+    background: var(--accent-dim);
+    color: var(--accent2);
+    border: 1px solid rgba(79,127,255,0.25);
+    letter-spacing: .04em;
+  }
+
+  .content { flex: 1; overflow-y: auto; padding: 24px; display: flex; gap: 20px; }
+
+  /* ── Form panel ── */
+  .form-panel {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .panel-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg3);
+  }
+  .panel-header .ph-icon { font-size: 18px; }
+  .panel-header h2 { font-size: 14px; font-weight: 600; }
+  .panel-header .ph-desc { font-size: 12px; color: var(--text2); margin-left: auto; font-family: var(--mono); }
+  .panel-body { padding: 18px; }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-field { display: flex; flex-direction: column; gap: 5px; }
+  .form-field.full { grid-column: 1 / -1; }
+  .form-field label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--text3);
+    font-family: var(--mono);
+  }
+  .form-field input, .form-field select {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color .15s;
+    width: 100%;
+    appearance: none;
+  }
+  .form-field input:focus, .form-field select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79,127,255,0.12);
+  }
+  .form-field input::placeholder { color: var(--text3); }
+
+  /* ── CLI output ── */
+  .cli-card {
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .cli-topbar {
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .cli-dots { display: flex; gap: 6px; }
+  .cli-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .d1 { background: #ff5f57; }
+  .d2 { background: #ffbd2e; }
+  .d3 { background: #28c840; }
+  .cli-label { font-size: 11px; font-family: var(--mono); color: var(--text3); }
+  .copy-btn {
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 3px 9px;
+    border-radius: 5px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .copy-btn:hover { background: var(--bg3); color: var(--text); }
+  .cli-body { padding: 16px; overflow-x: auto; }
+  .cli-body pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.9;
+    color: #c9d1d9;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .cli-kw { color: #79c0ff; }
+  .cli-flag { color: #ffab70; }
+  .cli-val { color: #a5d6ff; }
+  .cli-comment { color: #484f58; }
+
+  /* ── Action row ── */
+  .action-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 18px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    font-family: var(--display);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+    background: transparent;
+    color: var(--text2);
+  }
+  .btn:hover { background: var(--bg3); color: var(--text); }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: #3d6fe8; border-color: #3d6fe8; }
+  .btn-primary:disabled {
+    opacity: .4;
+    cursor: not-allowed;
+  }
+  .btn-ghost {
+    border-color: var(--border2);
+    color: var(--text2);
+  }
+
+  /* ── Right panel: config + log ── */
+  .right-panel { width: 280px; min-width: 280px; display: flex; flex-direction: column; gap: 16px; }
+
+  .config-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .config-card .panel-header { padding: 12px 16px; }
+  .config-card .panel-body { padding: 14px; }
+  .config-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  .config-field:last-child { margin-bottom: 0; }
+  .config-field label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text3);
+    font-family: var(--mono);
+  }
+  .config-field input, .config-field select {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 10px;
+    outline: none;
+    width: 100%;
+    transition: border-color .15s;
+    appearance: none;
+  }
+  .config-field input:focus, .config-field select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79,127,255,0.12);
+  }
+  .config-field .hint { font-size: 10px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
+  .pat-row { display: flex; gap: 6px; }
+  .pat-row input { flex: 1; min-width: 0; }
+  .pat-toggle {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text2);
+    border-radius: var(--radius);
+    padding: 0 10px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .pat-toggle:hover { color: var(--text); }
+
+  /* ── Run log ── */
+  .log-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    flex: 1;
+  }
+  .log-list { padding: 10px; max-height: 260px; overflow-y: auto; }
+  .log-entry {
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    margin-bottom: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    border: 1px solid transparent;
+  }
+  .log-entry.pending { background: var(--bg3); color: var(--text2); border-color: var(--border); }
+  .log-entry.running { background: var(--accent-dim); color: var(--accent2); border-color: rgba(79,127,255,0.2); }
+  .log-entry.success { background: var(--success-bg); color: var(--success); border-color: rgba(52,201,122,0.2); }
+  .log-entry.error   { background: var(--danger-bg); color: var(--danger); border-color: rgba(255,91,91,0.2); }
+  .log-time { color: var(--text3); }
+  .log-empty { text-align: center; padding: 24px 12px; color: var(--text3); font-family: var(--mono); font-size: 11px; }
+
+  /* ── Settings modal ── */
+  .modal-bg {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.65);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-lg);
+    width: 480px;
+    max-width: 95vw;
+    overflow: hidden;
+  }
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-header h3 { font-size: 14px; font-weight: 600; }
+  .modal-close {
+    background: none; border: none;
+    color: var(--text2); font-size: 18px;
+    cursor: pointer; line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 20px; }
+  .modal-body .config-field { margin-bottom: 16px; }
+  .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  /* ── Toasts ── */
+  .toast-area {
+    position: fixed;
+    bottom: 20px; right: 20px;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toast {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-family: var(--mono);
+    border: 1px solid transparent;
+    animation: slideIn .2s ease;
+    max-width: 340px;
+  }
+  .toast.success { background: var(--success-bg); color: var(--success); border-color: rgba(52,201,122,0.25); }
+  .toast.error   { background: var(--danger-bg);  color: var(--danger);  border-color: rgba(255,91,91,0.25); }
+  .toast.info    { background: var(--accent-dim); color: var(--accent2); border-color: rgba(79,127,255,0.25); }
+  @keyframes slideIn { from { transform: translateX(20px); opacity:0; } to { transform: translateX(0); opacity:1; } }
+
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="wordmark">⚡ AZ Ops</div>
+      <div class="sub">Config Portal v1.0</div>
+    </div>
+    <div class="sidebar-section">Network</div>
+    <button class="task-btn active" data-task="svcep" onclick="selectTask('svcep')">
+      <span class="icon">🔗</span> Service endpoint
+    </button>
+    <button class="task-btn" data-task="natgw" onclick="selectTask('natgw')">
+      <span class="icon">🌐</span> NAT gateway
+    </button>
+    <div class="sidebar-section">Access & Identity</div>
+    <button class="task-btn" data-task="kvpol" onclick="selectTask('kvpol')">
+      <span class="icon">🔑</span> KV access policy
+    </button>
+    <button class="task-btn" data-task="rglck" onclick="selectTask('rglck')">
+      <span class="icon">🔒</span> RG lock
+    </button>
+    <div class="sidebar-section">PaaS Networks</div>
+    <button class="task-btn" data-task="paasnet" onclick="selectTask('paasnet')">
+      <span class="icon">☁️</span> Selected networks
+    </button>
+    <div class="sidebar-bottom">
+      <button class="config-btn" onclick="openSettings()">
+        ⚙️ &nbsp;ADO connection settings
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title" id="topbar-title">Add service endpoint</div>
+        <div class="topbar-meta" id="topbar-meta">az network vnet subnet update --service-endpoints</div>
+      </div>
+      <span class="env-badge" id="env-badge">env: not set</span>
+    </div>
+
+    <div class="content">
+      <!-- Form + CLI -->
+      <div class="form-panel">
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="ph-icon" id="form-icon">🔗</span>
+            <h2 id="form-title">Task parameters</h2>
+            <span class="ph-desc" id="form-desc">subnet config</span>
+          </div>
+          <div class="panel-body">
+            <div class="form-grid" id="form-grid"></div>
+          </div>
+        </div>
+
+        <!-- CLI preview -->
+        <div class="cli-card">
+          <div class="cli-topbar">
+            <div class="cli-dots">
+              <div class="cli-dot d1"></div>
+              <div class="cli-dot d2"></div>
+              <div class="cli-dot d3"></div>
+            </div>
+            <span class="cli-label">generated command</span>
+            <button class="copy-btn" onclick="copyCommand()">⎘ copy</button>
+          </div>
+          <div class="cli-body">
+            <pre id="cli-output">az ...</pre>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="action-row">
+          <button class="btn btn-primary" id="trigger-btn" onclick="triggerPipeline()">
+            ▶ Trigger ADO pipeline
+          </button>
+          <button class="btn btn-ghost" onclick="openCloudShell()">
+            ⚡ Open Cloud Shell
+          </button>
+          <button class="btn btn-ghost" onclick="copyCommand()">
+            ⎘ Copy command
+          </button>
+        </div>
+      </div>
+
+      <!-- Right panel -->
+      <div class="right-panel">
+        <!-- Quick config (visible, no modal needed) -->
+        <div class="config-card">
+          <div class="panel-header">
+            <h2 style="font-size:13px">ADO Connection</h2>
+          </div>
+          <div class="panel-body">
+            <div class="config-field">
+              <label>Organization</label>
+              <input id="cfg-org" placeholder="contoso" oninput="saveConfig()">
+            </div>
+            <div class="config-field">
+              <label>Project</label>
+              <input id="cfg-proj" placeholder="infra-ops" oninput="saveConfig()">
+            </div>
+            <div class="config-field">
+              <label>Pipeline ID</label>
+              <input id="cfg-pid" placeholder="42" oninput="saveConfig()">
+              <span class="hint">?definitionId=XX in ADO URL</span>
+            </div>
+            <div class="config-field">
+              <label>PAT token</label>
+              <div class="pat-row">
+                <input id="cfg-pat" type="password" placeholder="••••••••••••" oninput="saveConfig()">
+                <button class="pat-toggle" onclick="togglePat()" title="Show/hide">👁</button>
+              </div>
+              <span class="hint">Release: read, write, execute</span>
+            </div>
+            <div class="config-field">
+              <label>Pipeline type</label>
+              <select id="cfg-type" onchange="saveConfig()">
+                <option value="yaml">YAML pipeline</option>
+                <option value="classic">Classic release</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Run log -->
+        <div class="log-card">
+          <div class="panel-header" style="padding:12px 16px">
+            <h2 style="font-size:13px">Run log</h2>
+            <button class="copy-btn" style="margin-left:auto" onclick="clearLog()">clear</button>
+          </div>
+          <div class="log-list" id="log-list">
+            <div class="log-empty">No runs yet. Trigger a pipeline to see results here.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal (advanced) -->
+<div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Advanced settings</h3>
+      <button class="modal-close" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="config-field">
+        <label>ADO API version</label>
+        <input id="modal-apiver" value="7.1" placeholder="7.1">
+        <span class="hint">Recommended: 7.1</span>
+      </div>
+      <div class="config-field">
+        <label>Branch / ref (YAML only)</label>
+        <input id="modal-branch" placeholder="refs/heads/main">
+        <span class="hint">Leave blank to use pipeline default</span>
+      </div>
+      <div class="config-field">
+        <label>Release description template</label>
+        <input id="modal-desc" value="Triggered via Ops Portal — {task}">
+        <span class="hint">{task} is replaced with the task name</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAdvanced()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toasts -->
+<div class="toast-area" id="toast-area"></div>
+
+<script>
+/* ─── Task definitions ─────────────────────────────────────── */
+const TASKS = {
+  svcep: {
+    label: 'Add service endpoint',
+    icon: '🔗',
+    desc: 'subnet config',
+    meta: 'az network vnet subnet update --service-endpoints',
+    fields: [
+      { id:'rg',      label:'Resource group',    ph:'my-rg' },
+      { id:'sub',     label:'Subscription ID',   ph:'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+      { id:'vnet',    label:'VNet name',          ph:'my-vnet' },
+      { id:'subnet',  label:'Subnet name',        ph:'app-subnet' },
+      { id:'svc',     label:'Service endpoint',   type:'select',
+        opts:['Microsoft.Storage','Microsoft.Sql','Microsoft.KeyVault','Microsoft.EventHub','Microsoft.ServiceBus','Microsoft.ContainerRegistry','Microsoft.CognitiveServices','Microsoft.AzureActiveDirectory'] }
+    ],
+    cmd: v => `az network vnet subnet update \\
+  --resource-group ${q(v.rg)} \\
+  --vnet-name ${q(v.vnet)} \\
+  --name ${q(v.subnet)} \\
+  --service-endpoints ${q(v.svc||'Microsoft.KeyVault')}`,
+    params: v => ({ resourceGroup:v.rg, vnetName:v.vnet, subnetName:v.subnet, serviceEndpoint:v.svc||'Microsoft.KeyVault', subscriptionId:v.sub })
+  },
+
+  natgw: {
+    label: 'Attach NAT gateway',
+    icon: '🌐',
+    desc: 'subnet config',
+    meta: 'az network vnet subnet update --nat-gateway',
+    fields: [
+      { id:'rg',      label:'Resource group',    ph:'my-rg' },
+      { id:'sub',     label:'Subscription ID',   ph:'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+      { id:'vnet',    label:'VNet name',          ph:'my-vnet' },
+      { id:'subnet',  label:'Subnet name',        ph:'app-subnet' },
+      { id:'natgw',   label:'NAT gateway name',   ph:'my-nat-gw' },
+    ],
+    cmd: v => `az network vnet subnet update \\
+  --resource-group ${q(v.rg)} \\
+  --vnet-name ${q(v.vnet)} \\
+  --name ${q(v.subnet)} \\
+  --nat-gateway ${q(v.natgw)}`,
+    params: v => ({ resourceGroup:v.rg, vnetName:v.vnet, subnetName:v.subnet, natGatewayName:v.natgw, subscriptionId:v.sub })
+  },
+
+  kvpol: {
+    label: 'KV access policy',
+    icon: '🔑',
+    desc: 'keyvault set-policy',
+    meta: 'az keyvault set-policy --secret-permissions',
+    fields: [
+      { id:'rg',      label:'Resource group',       ph:'my-rg' },
+      { id:'sub',     label:'Subscription ID',      ph:'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+      { id:'kv',      label:'Key Vault name',        ph:'my-keyvault' },
+      { id:'oid',     label:'Object ID / SP ID',    ph:'00000000-0000-0000-0000-000000000000' },
+      { id:'perms',   label:'Secret permissions',   type:'select',
+        opts:['get','get list','get list set','get list set delete','get list set delete backup restore recover purge'] },
+    ],
+    cmd: v => `az keyvault set-policy \\
+  --resource-group ${q(v.rg)} \\
+  --name ${q(v.kv)} \\
+  --object-id ${q(v.oid)} \\
+  --secret-permissions ${v.perms||'get'}`,
+    params: v => ({ resourceGroup:v.rg, keyVaultName:v.kv, objectId:v.oid, secretPermissions:v.perms||'get', subscriptionId:v.sub })
+  },
+
+  rglck: {
+    label: 'RG lock',
+    icon: '🔒',
+    desc: 'lock create / delete',
+    meta: 'az lock create / az lock delete',
+    fields: [
+      { id:'rg',       label:'Resource group',  ph:'my-rg' },
+      { id:'sub',      label:'Subscription ID', ph:'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+      { id:'lkname',   label:'Lock name',       ph:'rg-delete-lock' },
+      { id:'lktype',   label:'Lock type',       type:'select', opts:['CanNotDelete','ReadOnly'] },
+      { id:'action',   label:'Action',          type:'select', opts:['create','delete'] },
+    ],
+    cmd: v => {
+      const action = v.action||'create';
+      if(action==='delete') return `az lock delete \\
+  --name ${q(v.lkname)} \\
+  --resource-group ${q(v.rg)}`;
+      return `az lock create \\
+  --name ${q(v.lkname)} \\
+  --resource-group ${q(v.rg)} \\
+  --lock-type ${v.lktype||'CanNotDelete'}`;
+    },
+    params: v => ({ resourceGroup:v.rg, lockName:v.lkname, lockType:v.lktype||'CanNotDelete', lockAction:v.action||'create', subscriptionId:v.sub })
+  },
+
+  paasnet: {
+    label: 'PaaS selected networks',
+    icon: '☁️',
+    desc: 'network-rule add',
+    meta: 'az {service} network-rule add',
+    fields: [
+      { id:'rg',       label:'Resource group',   ph:'my-rg' },
+      { id:'sub',      label:'Subscription ID',  ph:'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+      { id:'svctype',  label:'PaaS service',     type:'select', opts:['cosmos','keyvault','adls','servicebus','eventhub'] },
+      { id:'svcname',  label:'Service name',     ph:'my-account' },
+      { id:'vnetrg',   label:'VNet resource group', ph:'vnet-rg', full:true },
+      { id:'vnet',     label:'VNet name',        ph:'my-vnet' },
+      { id:'subnet',   label:'Subnet name',      ph:'app-subnet' },
+    ],
+    cmd: v => {
+      const s = v.svctype||'cosmos';
+      const cmds = {
+        cosmos:      `az cosmosdb network-rule add \\\n  --resource-group ${q(v.rg)} \\\n  --name ${q(v.svcname)} \\\n  --vnet-name ${q(v.vnet)} \\\n  --subnet ${q(v.subnet)}`,
+        keyvault:    `az keyvault network-rule add \\\n  --resource-group ${q(v.rg)} \\\n  --name ${q(v.svcname)} \\\n  --vnet-name ${q(v.vnet)} \\\n  --subnet ${q(v.subnet)}`,
+        adls:        `az storage account network-rule add \\\n  --resource-group ${q(v.rg)} \\\n  --account-name ${q(v.svcname)} \\\n  --vnet-name ${q(v.vnet)} \\\n  --subnet ${q(v.subnet)}`,
+        servicebus:  `az servicebus namespace network-rule-set virtual-network-rule add \\\n  --resource-group ${q(v.rg)} \\\n  --namespace-name ${q(v.svcname)} \\\n  --vnet-name ${q(v.vnet)} \\\n  --subnet-name ${q(v.subnet)}`,
+        eventhub:    `az eventhubs namespace network-rule-set virtual-network-rule add \\\n  --resource-group ${q(v.rg)} \\\n  --namespace-name ${q(v.svcname)} \\\n  --vnet-name ${q(v.vnet)} \\\n  --subnet-name ${q(v.subnet)}`
+      };
+      return cmds[s]||cmds.cosmos;
+    },
+    params: v => ({ resourceGroup:v.rg, paasService:v.svctype||'cosmos', serviceName:v.svcname, vnetName:v.vnet, subnetName:v.subnet, vnetResourceGroup:v.vnetrg, subscriptionId:v.sub })
+  }
+};
+
+/* ─── State ────────────────────────────────────────────────── */
+let activeTask = 'svcep';
+let formVals   = {};
+let runLog     = [];
+let cfg        = {};
+let adv        = { apiVersion:'7.1', branch:'', descTemplate:'Triggered via Ops Portal — {task}' };
+
+const q = v => v ? `"${v}"` : '"<value>"';
+
+/* ─── Init ─────────────────────────────────────────────────── */
+window.addEventListener('DOMContentLoaded', () => {
+  loadConfig();
+  selectTask('svcep');
+});
+
+/* ─── Config persistence ───────────────────────────────────── */
+function saveConfig() {
+  cfg = {
+    org:   document.getElementById('cfg-org').value.trim(),
+    proj:  document.getElementById('cfg-proj').value.trim(),
+    pid:   document.getElementById('cfg-pid').value.trim(),
+    pat:   document.getElementById('cfg-pat').value.trim(),
+    type:  document.getElementById('cfg-type').value
+  };
+  try { localStorage.setItem('az-ops-cfg', JSON.stringify(cfg)); } catch(e){}
+  updateEnvBadge();
+}
+
+function loadConfig() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('az-ops-cfg')||'{}');
+    cfg = stored;
+    if(stored.org)  document.getElementById('cfg-org').value  = stored.org;
+    if(stored.proj) document.getElementById('cfg-proj').value = stored.proj;
+    if(stored.pid)  document.getElementById('cfg-pid').value  = stored.pid;
+    if(stored.pat)  document.getElementById('cfg-pat').value  = stored.pat;
+    if(stored.type) document.getElementById('cfg-type').value = stored.type;
+  } catch(e){}
+  try {
+    const storedAdv = JSON.parse(localStorage.getItem('az-ops-adv')||'{}');
+    adv = { ...adv, ...storedAdv };
+    if(document.getElementById('modal-apiver'))   document.getElementById('modal-apiver').value  = adv.apiVersion;
+    if(document.getElementById('modal-branch'))   document.getElementById('modal-branch').value  = adv.branch;
+    if(document.getElementById('modal-desc'))     document.getElementById('modal-desc').value    = adv.descTemplate;
+  } catch(e){}
+  updateEnvBadge();
+}
+
+function saveAdvanced() {
+  adv.apiVersion   = document.getElementById('modal-apiver').value.trim() || '7.1';
+  adv.branch       = document.getElementById('modal-branch').value.trim();
+  adv.descTemplate = document.getElementById('modal-desc').value.trim();
+  try { localStorage.setItem('az-ops-adv', JSON.stringify(adv)); } catch(e){}
+  closeSettings();
+  toast('Advanced settings saved', 'success');
+}
+
+function updateEnvBadge() {
+  const badge = document.getElementById('env-badge');
+  badge.textContent = cfg.org ? `env: ${cfg.org}` : 'env: not set';
+}
+
+/* ─── Task rendering ───────────────────────────────────────── */
+function selectTask(id) {
+  activeTask = id;
+  formVals   = {};
+  document.querySelectorAll('.task-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.task === id);
+  });
+  const t = TASKS[id];
+  document.getElementById('topbar-title').textContent = t.label;
+  document.getElementById('topbar-meta').textContent  = t.meta;
+  document.getElementById('form-icon').textContent    = t.icon;
+  document.getElementById('form-title').textContent   = 'Task parameters';
+  document.getElementById('form-desc').textContent    = t.desc;
+
+  // Seed select defaults
+  t.fields.forEach(f => {
+    if(f.type === 'select') formVals[f.id] = f.opts[0];
+  });
+
+  renderFormFields(t);
+  updateCLI();
+}
+
+function renderFormFields(t) {
+  const grid = document.getElementById('form-grid');
+  grid.innerHTML = t.fields.map(f => `
+    <div class="form-field${f.full?' full':''}">
+      <label>${f.label}</label>
+      ${f.type === 'select'
+        ? `<select id="ff-${f.id}" onchange="setVal('${f.id}',this.value)">
+             ${f.opts.map((o,i)=>`<option value="${o}"${i===0?' selected':''}>${o}</option>`).join('')}
+           </select>`
+        : `<input id="ff-${f.id}" placeholder="${f.ph||''}" oninput="setVal('${f.id}',this.value)">`
+      }
+    </div>`).join('');
+}
+
+function setVal(id, val) {
+  formVals[id] = val;
+  updateCLI();
+}
+
+function updateCLI() {
+  const t = TASKS[activeTask];
+  document.getElementById('cli-output').textContent = t.cmd(formVals);
+}
+
+/* ─── ADO trigger ──────────────────────────────────────────── */
+async function triggerPipeline() {
+  if(!cfg.org || !cfg.proj || !cfg.pid || !cfg.pat) {
+    toast('Fill in ADO connection settings first (right panel)', 'error');
+    return;
+  }
+
+  const task = TASKS[activeTask];
+  const params = task.params(formVals);
+  const isYaml = cfg.type !== 'classic';
+  const apiVer = adv.apiVersion || '7.1';
+  const desc = (adv.descTemplate||'Triggered via Ops Portal — {task}').replace('{task}', task.label);
+
+  let url, body;
+
+  if(isYaml) {
+    url  = `https://dev.azure.com/${cfg.org}/${cfg.proj}/_apis/pipelines/${cfg.pid}/runs?api-version=${apiVer}`;
+    body = { templateParameters: params };
+    if(adv.branch) body.resources = { repositories: { self: { refName: adv.branch } } };
+  } else {
+    url  = `https://vsrm.dev.azure.com/${cfg.org}/${cfg.proj}/_apis/release/releases?api-version=${apiVer}`;
+    const variables = {};
+    Object.entries(params).forEach(([k,v]) => { variables[k.toUpperCase()] = { value: v||'' }; });
+    body = { definitionId: parseInt(cfg.pid), description: desc, variables, artifacts:[] };
+  }
+
+  const btn = document.getElementById('trigger-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Triggering…';
+
+  addLog(`Triggering: ${task.label}`, 'running');
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + btoa(':' + cfg.pat)
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+
+    if(!res.ok) {
+      const msg = data?.message || `HTTP ${res.status}`;
+      addLog(`Error: ${msg}`, 'error');
+      toast(`Pipeline trigger failed: ${msg}`, 'error');
+    } else {
+      const runUrl  = data?._links?.web?.href || data?._links?.self?.href || '#';
+      const runId   = data?.id || data?.name || '—';
+      addLog(`Success — Run #${runId} | ${runUrl}`, 'success', runUrl);
+      toast(`Pipeline triggered! Run #${runId}`, 'success');
+    }
+  } catch(err) {
+    addLog(`Network error: ${err.message}`, 'error');
+    toast(`Network error: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '▶ Trigger ADO pipeline';
+  }
+}
+
+/* ─── Log ──────────────────────────────────────────────────── */
+function addLog(msg, state, link) {
+  const now  = new Date().toLocaleTimeString();
+  const entry = { msg, state, link, time: now };
+  runLog.unshift(entry);
+  renderLog();
+}
+
+function renderLog() {
+  const el = document.getElementById('log-list');
+  if(!runLog.length) {
+    el.innerHTML = '<div class="log-empty">No runs yet.</div>';
+    return;
+  }
+  el.innerHTML = runLog.slice(0,20).map(e => `
+    <div class="log-entry ${e.state}">
+      <span class="log-time">${e.time}</span>
+      ${e.link
+        ? ` <a href="${e.link}" target="_blank" style="color:inherit;word-break:break-all">${e.msg}</a>`
+        : ` ${e.msg}`}
+    </div>`).join('');
+}
+
+function clearLog() {
+  runLog = [];
+  renderLog();
+}
+
+/* ─── Helpers ──────────────────────────────────────────────── */
+function copyCommand() {
+  const txt = document.getElementById('cli-output').textContent;
+  navigator.clipboard.writeText(txt)
+    .then(()  => toast('Command copied to clipboard', 'success'))
+    .catch(()  => toast('Copy failed — try manually', 'error'));
+}
+
+function openCloudShell() {
+  window.open('https://shell.azure.com', '_blank');
+}
+
+function togglePat() {
+  const inp = document.getElementById('cfg-pat');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function openSettings()  { document.getElementById('modal-bg').classList.add('show'); }
+function closeSettings() { document.getElementById('modal-bg').classList.remove('show'); }
+
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  const area = document.getElementById('toast-area');
+  area.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+</script>
+</body>
+</html>

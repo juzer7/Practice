@@ -1,0 +1,139 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Task: Add or update a Key Vault access policy for a service principal / identity
+# Trigger: Manual / REST API from Ops Portal
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "kv-access-policy-$(Date:yyyyMMdd)-$(Rev:r)"
+
+parameters:
+  - name: subscriptionId
+    type: string
+    displayName: "Azure Subscription ID"
+    default: ""
+
+  - name: resourceGroup
+    type: string
+    displayName: "Resource Group"
+    default: ""
+
+  - name: keyVaultName
+    type: string
+    displayName: "Key Vault Name"
+    default: ""
+
+  - name: objectId
+    type: string
+    displayName: "Object ID (SP, Managed Identity, User)"
+    default: ""
+
+  - name: secretPermissions
+    type: string
+    displayName: "Secret Permissions (space-separated)"
+    default: "get"
+    # Common values: get | get list | get list set | get list set delete
+
+  - name: keyPermissions
+    type: string
+    displayName: "Key Permissions (optional, space-separated)"
+    default: ""
+
+  - name: certificatePermissions
+    type: string
+    displayName: "Certificate Permissions (optional, space-separated)"
+    default: ""
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  SUBSCRIPTION_ID:         ${{ parameters.subscriptionId }}
+  RESOURCE_GROUP:          ${{ parameters.resourceGroup }}
+  KEY_VAULT_NAME:          ${{ parameters.keyVaultName }}
+  OBJECT_ID:               ${{ parameters.objectId }}
+  SECRET_PERMISSIONS:      ${{ parameters.secretPermissions }}
+  KEY_PERMISSIONS:         ${{ parameters.keyPermissions }}
+  CERTIFICATE_PERMISSIONS: ${{ parameters.certificatePermissions }}
+
+stages:
+  - stage: Validate
+    displayName: "Validate inputs"
+    jobs:
+      - job: ValidateJob
+        steps:
+          - script: |
+              fail=0
+              [ -z "$RESOURCE_GROUP"  ] && echo "ERROR: resourceGroup is required"  && fail=1
+              [ -z "$KEY_VAULT_NAME"  ] && echo "ERROR: keyVaultName is required"   && fail=1
+              [ -z "$OBJECT_ID"       ] && echo "ERROR: objectId is required"        && fail=1
+              [ -z "$SECRET_PERMISSIONS" ] && echo "ERROR: secretPermissions is required" && fail=1
+              # Basic UUID format check on objectId
+              if [[ -n "$OBJECT_ID" ]] && ! [[ "$OBJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+                echo "ERROR: objectId does not look like a valid GUID"
+                fail=1
+              fi
+              [ "$fail" = "1" ] && exit 1
+              echo "Parameters OK"
+              echo "  Key Vault        : $KEY_VAULT_NAME"
+              echo "  Object ID        : $OBJECT_ID"
+              echo "  Secret perms     : $SECRET_PERMISSIONS"
+              echo "  Key perms        : ${KEY_PERMISSIONS:-<none>}"
+              echo "  Certificate perms: ${CERTIFICATE_PERMISSIONS:-<none>}"
+            displayName: "Check required params"
+
+  - stage: Apply
+    displayName: "Set Key Vault access policy"
+    dependsOn: Validate
+    jobs:
+      - job: PolicyJob
+        displayName: "az keyvault set-policy"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Set subscription context"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                [ -n "$SUBSCRIPTION_ID" ] && az account set --subscription "$SUBSCRIPTION_ID"
+                echo "Active subscription: $(az account show --query name -o tsv)"
+
+          - task: AzureCLI@2
+            displayName: "Verify Key Vault exists"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Verifying Key Vault $KEY_VAULT_NAME..."
+                az keyvault show \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --name "$KEY_VAULT_NAME" \
+                  --query "name" -o tsv
+                echo "Key Vault found."
+
+          - task: AzureCLI@2
+            displayName: "Apply access policy"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                CMD="az keyvault set-policy \
+                  --resource-group $RESOURCE_GROUP \
+                  --name $KEY_VAULT_NAME \
+                  --object-id $OBJECT_ID \
+                  --secret-permissions $SECRET_PERMISSIONS"
+
+                [ -n "$KEY_PERMISSIONS"         ] && CMD="$CMD --key-permissions $KEY_PERMISSIONS"
+                [ -n "$CERTIFICATE_PERMISSIONS" ] && CMD="$CMD --certificate-permissions $CERTIFICATE_PERMISSIONS"
+
+                echo "Running: $CMD"
+                eval $CMD
+
+                echo "Policy applied. Current policies for object $OBJECT_ID:"
+                az keyvault show \
+                  --name "$KEY_VAULT_NAME" \
+                  --query "properties.accessPolicies[?objectId=='$OBJECT_ID']" -o table

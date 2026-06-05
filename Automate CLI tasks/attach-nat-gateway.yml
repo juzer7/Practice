@@ -1,0 +1,141 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Task: Attach a NAT gateway to an existing subnet
+# Trigger: Manual / REST API from Ops Portal
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "attach-nat-gateway-$(Date:yyyyMMdd)-$(Rev:r)"
+
+parameters:
+  - name: subscriptionId
+    type: string
+    displayName: "Azure Subscription ID"
+    default: ""
+
+  - name: resourceGroup
+    type: string
+    displayName: "Resource Group (VNet)"
+    default: ""
+
+  - name: vnetName
+    type: string
+    displayName: "VNet Name"
+    default: ""
+
+  - name: subnetName
+    type: string
+    displayName: "Subnet Name"
+    default: ""
+
+  - name: natGatewayName
+    type: string
+    displayName: "NAT Gateway Name"
+    default: ""
+
+  - name: natGatewayResourceGroup
+    type: string
+    displayName: "NAT Gateway Resource Group (if different)"
+    default: ""      # Falls back to resourceGroup if empty
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  SUBSCRIPTION_ID:  ${{ parameters.subscriptionId }}
+  RESOURCE_GROUP:   ${{ parameters.resourceGroup }}
+  VNET_NAME:        ${{ parameters.vnetName }}
+  SUBNET_NAME:      ${{ parameters.subnetName }}
+  NAT_GW_NAME:      ${{ parameters.natGatewayName }}
+  NAT_GW_RG:        ${{ coalesce(parameters.natGatewayResourceGroup, parameters.resourceGroup) }}
+
+stages:
+  - stage: Validate
+    displayName: "Validate inputs"
+    jobs:
+      - job: ValidateJob
+        steps:
+          - script: |
+              fail=0
+              [ -z "$RESOURCE_GROUP" ] && echo "ERROR: resourceGroup is required"   && fail=1
+              [ -z "$VNET_NAME"      ] && echo "ERROR: vnetName is required"         && fail=1
+              [ -z "$SUBNET_NAME"    ] && echo "ERROR: subnetName is required"       && fail=1
+              [ -z "$NAT_GW_NAME"    ] && echo "ERROR: natGatewayName is required"   && fail=1
+              [ "$fail" = "1" ] && exit 1
+              echo "Parameters OK"
+              echo "  Resource Group : $RESOURCE_GROUP"
+              echo "  VNet           : $VNET_NAME"
+              echo "  Subnet         : $SUBNET_NAME"
+              echo "  NAT Gateway    : $NAT_GW_NAME (RG: $NAT_GW_RG)"
+            displayName: "Check required params"
+
+  - stage: Apply
+    displayName: "Attach NAT gateway"
+    dependsOn: Validate
+    jobs:
+      - job: NatGwJob
+        displayName: "az network vnet subnet update"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Set subscription context"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                [ -n "$SUBSCRIPTION_ID" ] && az account set --subscription "$SUBSCRIPTION_ID"
+                echo "Active subscription: $(az account show --query name -o tsv)"
+
+          - task: AzureCLI@2
+            displayName: "Verify NAT gateway exists"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Verifying NAT gateway $NAT_GW_NAME in RG $NAT_GW_RG..."
+                az network nat gateway show \
+                  --resource-group "$NAT_GW_RG" \
+                  --name "$NAT_GW_NAME" \
+                  --query "provisioningState" -o tsv
+                echo "NAT gateway found."
+
+          - task: AzureCLI@2
+            displayName: "Check for existing NAT gateway on subnet"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                CURRENT=$(az network vnet subnet show \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --vnet-name "$VNET_NAME" \
+                  --name "$SUBNET_NAME" \
+                  --query "natGateway.id" -o tsv 2>/dev/null || echo "")
+                if [ -n "$CURRENT" ]; then
+                  echo "WARNING: Subnet already has a NAT gateway attached: $CURRENT"
+                  echo "It will be replaced by $NAT_GW_NAME."
+                else
+                  echo "No existing NAT gateway on subnet. Safe to attach."
+                fi
+
+          - task: AzureCLI@2
+            displayName: "Attach NAT gateway to subnet"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Attaching NAT gateway '$NAT_GW_NAME' to subnet '$SUBNET_NAME'..."
+                az network vnet subnet update \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --vnet-name "$VNET_NAME" \
+                  --name "$SUBNET_NAME" \
+                  --nat-gateway "$NAT_GW_NAME"
+                echo "Done. Verifying attachment:"
+                az network vnet subnet show \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --vnet-name "$VNET_NAME" \
+                  --name "$SUBNET_NAME" \
+                  --query "{subnet:name, natGateway:natGateway.id}" -o table
